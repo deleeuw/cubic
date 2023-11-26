@@ -1,0 +1,500 @@
+---
+title: "Solving Cubic Equations by Iteration"
+author: 
+- Jan de Leeuw - University of California Los Angeles
+date: '`r paste("Started November 19, 2023, Version of",format(Sys.Date(),"%B %d, %Y"))`'
+output:
+  bookdown::pdf_document2:
+    latex_engine: lualatex 
+    includes:
+      in_header: preamble.tex
+    keep_tex: yes
+    toc: true
+    toc_depth: 3
+    number_sections: yes
+  bookdown::html_document2:
+    keep_md: yes
+    css: preamble.css
+    toc: true
+    toc_depth: 3
+    number_sections: yes
+graphics: yes
+mainfont: Times New Roman
+fontsize: 12pt
+bibliography: ["mypubs.bib","total.bib"]
+abstract: We give algorithms to find the roots of a cubic polynomial. Instead of thinking of this note as a contribution to this age-old subject, it is better to think of it as a didactic piece on the behaviour of different iterative procedures in a simple example. 
+---
+```{r loadpackages, echo = FALSE}
+suppressPackageStartupMessages(library(numDeriv, quietly = TRUE))
+suppressPackageStartupMessages(library(polynom, quietly = TRUE))
+suppressPackageStartupMessages(library(MASS, quietly = TRUE))
+```
+
+```{r load code, echo = FALSE}
+source("lsFunc.R")
+source("findRoots.R")
+source("alsSolve.R")
+source("newton.R")
+source("newtonLS.R")
+source("janUtil.R")
+```
+
+```{r setup, include = FALSE}
+def.chunk.hook  <- knitr::knit_hooks$get("chunk")
+knitr::knit_hooks$set(chunk = function(x, options) {
+  x <- def.chunk.hook(x, options)
+  paste0("\n \\", "footnotesize","\n\n", x, "\n\n \\normalsize")
+})
+```
+
+
+
+
+**Note:** 
+This working paper, inspired by @strobach_11, will be expanded/updated frequently. All suggestions for improvement are welcome. 
+
+# Introduction
+
+An arbitrary monic cubic polynomial with real coefficients has always at least one real root.
+This implies that any cubic can be written as a product of the form
+\begin{equation}
+x^3 + px^2 + qx + r = (x+\gamma)(x^2 + \alpha x +\beta)
+(\#eq:ytox)
+\end{equation}
+with $(\alpha,\beta,\gamma)$ real. One way to think about this is that we need three
+numbers to describe monic cubics. One system is to use the coefficients $(p,q,r)$,
+another is to use $(\alpha,\beta,\gamma)$ defined implicitly by \@ref(eq:ytox).
+A third system is to use the roots of the polynomial, as in
+\begin{equation}
+x^3 + px^2 + qx + r = (x-\xi_1)(x-\xi_2)(x-\xi_3)
+(\#eq:ytoz)
+\end{equation}
+In this third system two of the roots may be complex numbers and 
+the roots can be ordered arbitrarily
+
+Of the mappings of one system of three coordinates into another one is classical.
+The map $(p,q,r)\Rightarrow(\xi_1,\xi_2,\xi_3)$ is the Cardano map that
+describes the algebraic steps to solve a cubic equation, or the computational
+step to find the eigenvalues of the companion matrix. Also the map is not
+one-to-one because the three roots $(\xi_1,\xi_2,\xi_3)$ can be permuted, and thus 
+define $3!=6$ solutions.  
+
+The map $(\alpha,\beta,\gamma)\Rightarrow(\xi_1,\xi_2,\xi_3)$ is much simpler.
+In fact
+\begin{align}
+\xi_1&=-\gamma,\\
+\xi_2&=\frac{-\alpha+\sqrt{\alpha^2-4\beta}}{2},\\
+\xi_3&=\frac{-\alpha-\sqrt{\alpha^2-4\beta}}{2}.
+\end{align}
+
+In this paper we are interested, following @strobach_11, in computer implementations of
+$(p,q,r)\Rightarrow(\alpha,\beta,\gamma)$.
+Comparing coefficients on both sides of \@ref(eq:ytox) gives the equations
+\begin{align}
+\gamma+\alpha&=p,(\#eq:eq1)\\
+\beta+\alpha\gamma&=q,(\#eq:eq2)\\
+\beta\gamma&=r,(\#eq:eq3)
+\end{align}
+which is actually the map $(\alpha,\beta,\gamma)\Rightarrow(p,q,r)$.
+
+\@ref(eq:eq1), \@ref(eq:eq2), and \@ref(eq:eq3) are three equations in three unknowns, which always have at least one solution with $(\alpha,\beta,\gamma)$ real. If the cubic has only
+one real root the solution is unique, ... complex roots .. If there are three distinct real roots, 
+for example, then there are three solutions for $\gamma$ and three corresponding solutions
+for $\alpha$ and $\beta$.
+
+Vieta's formulas. $(\xi_1,\xi_2,\xi_3)\Rightarrow(p,q,r)$
+
+\begin{align}
+p&=-(\xi_1+\xi_2+\xi_3),\\
+q&=\xi_1\xi_2+\xi_1\xi_3+\xi_2\xi_3,\\
+r&=-\xi_1\xi_2\xi_3.
+\end{align}
+
+The Jacobian is
+
+$$
+\begin{bmatrix}
+-1&-1&-1\\
+\xi_2+\xi_3&\xi_1+\xi_3&\xi_1+\xi_2\\
+-\xi_2\xi_3&-\xi_1\xi_3&-\xi_1\xi_2
+\end{bmatrix}
+$$
+
+# Algorithms
+
+Initial
+
+## Newton
+
+The most obvious way to solve the three equations \@ref(eq:eq1), \@ref(eq:eq2), and \@ref(eq:eq3) numerically is Newton's method.
+
+Consider the loss function
+$$
+\sigma(\theta)=\frac12\sum_{k=1}^K f_k^2(\theta)
+$$
+which we want to minimize over $\theta\in\mathbb{R}^K$. It is known a priori that there is at least one $\theta_0\in\Theta$ such that $f_k(\theta_0)=0$. Thus
+$$
+\min_{\theta\in\Theta}\sigma(\theta)=0,
+$$
+and 
+$$
+\theta_0\in\mathop{\text{argmin}}_{\theta\in\Theta}\sigma(\theta)
+$$
+Newton-Raphson = Gauss-Newton
+$$
+f_k(\theta+\epsilon)\approx f_k(\theta)+\sum_{\ell=1}^K\mathcal{D}_\ell f_k(\theta)\epsilon_\ell
+$$
+$$
+\sigma(\theta+\epsilon)\approx\frac12\sum_{k=1}^K\{f_k(\theta)+\sum_{\ell=1}^K\mathcal{D}_\ell f_k(\theta)\epsilon_\ell\}^2=\sigma(\theta)+\sum_{\ell=1}^K\left\{\sum_{k=1}^Kf_k(\theta)\mathcal{D}_\ell f_k(\theta)\right\}\epsilon_\ell+\frac12\sum_{\ell=1}^K\sum_{\nu=1}^K\left\{\sum_{k=1}^K\mathcal{D}_\ell f_k(\theta)\mathcal{D}_\nu f_k(\theta)\right\}\epsilon_\ell\epsilon_\nu
+$$
+$$
+\sigma(\theta+\epsilon)\approx\sigma(\theta)+\sum_{\ell=1}^K\left\{\sum_{k=1}^Kf_k(\theta)\mathcal{D}_\ell f_k(\theta)\right\}\epsilon_\ell+\frac12\sum_{\ell=1}^K\sum_{\nu=1}^K\left\{\sum_{k=1}^K\mathcal{D}_\ell f_k(\theta)\mathcal{D}_\nu f_k(\theta)+f_{k}(\theta)\mathcal{D}_{\ell\nu}f_k(\theta)\right\}\epsilon_\ell\epsilon_\nu
+$$
+Gathering
+$$
+F(\theta+\epsilon)\approx F(\theta)+\mathcal{J}(\theta)\epsilon
+$$
+thus
+$$
+\sigma(\theta+\epsilon)=\|F(\theta+\epsilon)\|^2\approx\|F(\theta)+\mathcal{J}(\theta)\epsilon\|^2
+$$
+which is minimized over $\epsilon$ at
+$$
+\epsilon=-\{\mathcal{J}'(\theta)\mathcal{J}(\theta)\}^{-1}\mathcal{J}'(\theta)F(\theta)
+$$
+and if $J(\theta)$ is square and non-singular
+$$
+\epsilon=-\mathcal{J}^{-1}(\theta)F(\theta)
+$$
+so that the update of $\theta$ is
+$$
+\theta^+=\theta-\mathcal{J}^{-1}(\theta)F(\theta)
+$$
+One application: $f_k(\theta)=\mathcal{D}_kg(\theta)$. 
+$\mathcal{D}_\ell f_k(\theta)=\mathcal{D}_{k\ell}g(\theta)$
+$\theta^+=\theta-\{\mathcal{D}^2g(\theta)\}^{-1}\mathcal{D}g(\theta)$
+
+
+This is different from NewtonLS applied to $\sigma$
+$$
+\theta^+=\theta-\{\mathcal{D}^2\sigma(\theta)\}^{-1}\mathcal{D}\sigma(\theta)
+$$
+
+### abc
+
+\begin{align}
+f_1(\alpha,\beta,\gamma)&:=\alpha+\gamma-p=0,\\
+f_2(\alpha,\beta,\gamma)&:=\beta+\alpha\gamma-q=0,\\
+f_3(\alpha,\beta,\gamma)&:=\beta\gamma-r=0.
+\end{align}
+
+The Jacobian is
+$$
+\begin{bmatrix}
+1&0&1\\
+\gamma&1&\alpha\\
+0&\gamma&\beta
+\end{bmatrix}
+$$
+and its inverse is
+$$
+\frac{1}{\beta+\gamma^2-\alpha\gamma}
+\begin{bmatrix}
+\beta-\alpha\gamma&\gamma&-1\\
+-\beta\gamma&\beta&\gamma-\alpha\\
+\gamma^2&-\gamma&1
+\end{bmatrix}.
+$$
+Thus the Newton correction is
+$$
+\frac{1}{\beta+\gamma^2-\alpha\gamma}
+\begin{bmatrix}
+\beta-\alpha\gamma&\gamma&-1\\
+-\beta\gamma&\beta&\gamma-\alpha\\
+\gamma^2&-\gamma&1
+\end{bmatrix}
+\begin{bmatrix}
+\alpha+\gamma-p\\
+\beta+\alpha\gamma-q\\
+\beta\gamma-r
+\end{bmatrix}.
+$$
+
+For an initial estimate of our iterations we guess a value for $\gamma^{(0)}$. Next $\alpha^{(0)}$ and $\beta^{(0)}$ are computed as the least squares solution of the over-determined system
+$$
+\begin{bmatrix}
+1&0\\
+\gamma^{(0)}&1\\
+0&\gamma^{(0)}
+\end{bmatrix}
+\begin{bmatrix}\alpha\\\beta\end{bmatrix}
+=\begin{bmatrix}p-\gamma^{(0)}\\q\\r\end{bmatrix}
+$$
+This is actually also a step in the ALS algorithm, which we discuss next.
+
+
+## Alternating Least Squares
+
+An alternative way to solve the system \@ref(eq:eq1)-\@ref(eq:eq3) is to minimize the function
+\begin{equation}
+\sigma(\alpha,\beta,\gamma):=\frac12(\gamma+\alpha-p)^2+\frac12(\beta+\alpha\gamma-q)^2+\frac12(\beta\gamma-r)^2
+(\#eq:lsloss)
+\end{equation}
+over $(\alpha,\beta,\gamma)$. In the ALS (Alternating Least Squares) algorithm we alternate
+minimizing over $\gamma$ for fixed $(\alpha,\beta)$ and over $(\alpha,\beta)$ for fixed $\gamma$. Thus
+\begin{align}
+(\alpha^{(k+1)},\beta^{(k+1)})&=\mathop{\text{argmin}}_{(\alpha,\beta)}\sigma(\alpha,\beta,\gamma^{(k)}),\\
+\gamma^{(k+1)}&=\mathop{\text{argmin}}_\gamma\sigma(\alpha^{(k+1)},\beta^{(k+1)},\gamma).
+\end{align}
+The partials are
+\begin{align}
+\mathcal{D}_1\sigma(\alpha,\beta,\gamma)&=(\gamma+\alpha-p)+\gamma(\beta+\alpha\gamma-q),\\
+\mathcal{D}_2\sigma(\alpha,\beta,\gamma)&=(\beta+\alpha\gamma-q)+\gamma(\beta\gamma-r),\\
+\mathcal{D}_3\sigma(\alpha,\beta,\gamma)&=(\gamma+\alpha-p)+\alpha(\beta+\alpha\gamma-q)+\beta(\beta\gamma-r).
+\end{align}
+
+Write $\mathcal{D}_1\sigma(\alpha,\beta,\gamma)=0$ and $\mathcal{D}_2\sigma(\alpha,\beta,\gamma)=0$ as
+\begin{equation}
+\begin{bmatrix}(1+\gamma^2)&\gamma\\\gamma&(1+\gamma^2)\end{bmatrix}
+\begin{bmatrix}\alpha\\\beta\end{bmatrix}=\begin{bmatrix}p-\gamma(1-q)\\
+q+\gamma r\end{bmatrix}
+\end{equation}
+and $\mathcal{D}_3\sigma(\alpha,\beta,\gamma)=0$ as
+$$
+(1+\alpha^2+\beta^2)\gamma=(p-\alpha)+\alpha(q-\beta)+\beta r
+$$
+$$
+\gamma^{(k+1)}=\frac{}{1+(\alpha^{(k+1)})^2+(\beta^{(k+1)})^2}
+$$
+
+$$
+\alpha^{(k+1)}=\\
+\beta^{(k+1)}=
+$$
+
+The speed of convergence $\rho$ of the ALS iterations to a solution $(\alpha,\beta,\gamma)$ can be computed from the second derivatives of $\sigma$ (@deleeuw_C_94c).
+\begin{equation}
+\rho(\alpha,\beta,\gamma):= \frac{
+\left\{\begin{matrix}\frac{\partial^2\sigma}{\partial\gamma\partial\alpha}&\frac{\partial^2\sigma}{\partial\gamma\partial\alpha}\end{matrix}\right\}
+\left\{\begin{matrix}\frac{\partial^2\sigma}{\partial\alpha\partial\alpha}&\frac{\partial^2\sigma}{\partial\alpha\partial\beta}\\\frac{\partial^2\sigma}{\partial\beta\partial\alpha}&\frac{\partial^2\sigma}{\partial\beta\partial\beta}\end{matrix}\right\}^{-1}
+\left\{\begin{matrix}\frac{\partial^2\sigma}{\partial\gamma\partial\alpha}\\\frac{\partial^2\sigma}{\partial\gamma\partial\alpha}\end{matrix}\right\}}
+{\left\{\frac{\partial^2\sigma}{\partial\gamma\partial\gamma}\right\}}
+\end{equation}
+Differentiating .., .., .. once again gives the Hessian 
+$$
+\begin{bmatrix}
+1+\gamma^2&\gamma&(1+\beta-q)+2\alpha\gamma\\
+\gamma&1+\gamma^2&(\alpha-r)+2\beta\gamma\\
+(1+\beta-q)+2\alpha\gamma&(\alpha-r)+2\beta\gamma&1+\alpha^2+\beta^2
+\end{bmatrix}
+$$
+
+## Newton Least Squares
+
+
+$$
+\begin{bmatrix}
+1+\gamma^2&\gamma&(1+\beta-q)+2\alpha\gamma\\
+\gamma&1+\gamma^2&(\alpha-r)+2\beta\gamma\\
+(1+\beta-q)+2\alpha\gamma&(\alpha-r)+2\beta\gamma&1+\alpha^2+\beta^2
+\end{bmatrix}
+$$
+
+
+# Examples
+
+In this section we analyze the three algorithms (Newton, ALS, and Newton on the LS loss function) on
+four cubics which all have their roots between zero and three.  
+
+All runs use the same initial estimate. We select a value for $\gamma^{(0)}$. Next $\alpha^{(0)}$ and $\beta^{(0)}$ are computed as the least squares solution of the over-determined system
+\begin{equation}
+\begin{bmatrix}
+1&0\\
+\gamma^{(0)}&1\\
+0&\gamma^{(0)}
+\end{bmatrix}
+\begin{bmatrix}\alpha\\\beta\end{bmatrix}
+=\begin{bmatrix}p-\gamma^{(0)}\\q\\r\end{bmatrix}
+\end{equation}
+Each of the four polynomial $\times$ three algorithms combination is run multiple times by using different values
+for $\gamma^{(0)}$. We varied $\gamma^{(0)}$ from 0.0 to 3.0 in steps of 0.1. This gives 31 runs, the output of which is summarized in a table. There are twelve such tables.
+
+
+@venables_hornik_maechler_22
+
+## Example 1: $f(x)=(x-1)(x-2)(x-3)$
+
+```{r example1, echo = FALSE}
+p1 <- polynomial(c(-1, 1)) * polynomial(c(-2, 1)) * polynomial(c(-3, 1))
+y <- rev(as.vector(p1))[-1]
+```
+The cubic $f(x)=(x-1)(x-2)(x-3)$, with $(p,q,r)$ equal to `r y`
+and $(\alpha,\beta,\gamma)=(-5, 6, -1)$, has
+three distinct real roots.
+
+```{r plot1, fig.align = "center", echo = FALSE}
+plot(p1, col = "RED", lwd = 3, xlim = c(0,3))
+abline(h = 0, col = "BLUE") 
+abline(v = 1, col = "BLUE")
+abline(v = 2, col = "BLUE")
+abline(v = 3, col = "BLUE")
+```
+
+```{r newton1, echo = FALSE}
+xnew1 <- newton(y, gamma = 0.0, itmax = 100, verbose = FALSE, eps = 1e-15)
+```
+
+### Newton. 
+
+```{r newseq1, echo = FALSE}
+newtonRunner(y)
+```
+
+### ALS
+
+```{r alsseq1, echo = FALSE, cache = TRUE}
+alsRunner(y)
+```
+
+### newtonLS
+
+```{r nlsseq1, echo = FALSE}
+nlsRunner(y)
+```
+
+## Example 2: $f(x)=(x-1)^2(x-2)$
+
+```{r example2, echo = FALSE}
+p2 <- polynomial(c(-1, 1)) * polynomial(c(-1, 1)) * polynomial(c(-2, 1))
+y <- rev(as.vector(p2))[-1]
+```
+The cubic $f(x)=(x-1)^2(x-2)$ with $(p,q,r)$ equal to `r y`, has
+two distinct real roots, one of which is a double root.
+$(\alpha,\beta,\gamma)=(-3, 2, -1)$
+
+```{r plot2, fig.align = "center", echo = FALSE}
+plot(p2, col = "RED", lwd = 3, xlim = c(0,3))
+abline(h = 0, col = "BLUE") 
+abline(v = 1, col = "BLUE")
+abline(v = 2, col = "BLUE")
+```
+
+### Newton
+
+```{r newseq2, echo = FALSE}
+newtonRunner(y)
+```
+
+### ALS
+
+```{r alsseq2, echo = FALSE, cache = TRUE}
+alsRunner(y)
+```
+
+### newtonLS
+
+```{r nlsseq2, echo = FALSE}
+nlsRunner(y)
+```
+
+## Example 3: $f(x)=(x-1)^3$
+
+```{r example3, echo = FALSE}
+p3 <- polynomial(c(-1, 1)) * polynomial(c(-1, 1)) * polynomial(c(-1, 1))
+y <- rev(as.vector(p3))[-1]
+```
+The cubic $f(x)=(x-1)^3$, with $(p,q,r)$ equal to `r y`, has
+a single triple real root. $(\alpha,\beta,\gamma)=(-2, 1, -1)$
+
+```{r plot3, fig.align = "center", echo = FALSE}
+plot(p3, col = "RED", lwd = 3, xlim = c(0,3))
+abline(h = 0, col = "BLUE") 
+abline(v = 1, col = "BLUE")
+abline(v = 2, col = "BLUE")
+abline(v = 3, col = "BLUE")
+```
+
+### Newton
+
+```{r newseq3, echo = FALSE}
+newtonRunner(y)
+```
+
+### ALS
+
+```{r alseq3, echo = FALSE, cache = TRUE}
+alsRunner(y)
+```
+
+### newtonLS
+
+```{r nlsseq3, echo = FALSE}
+nlsRunner(y)
+```
+
+## Example 4: $f(x)=(x-1)(x^2-4x+6)$
+
+
+```{r example4, echo = FALSE}
+p4 <- polynomial(c(-1, 1)) * polynomial(c(6, -4, 1))
+y <- rev(as.vector(p4))[-1]
+```
+The cubic $f(x)=(x-1)(x^2-4x+6)$, with $(p,q,r)$ equal to `r y`, has
+a single real root and two conjugate complex roots. 
+
+$(\alpha,\beta,\gamma)=(-4, 6, -1)$
+
+```{r plot4, fig.align = "center", echo = FALSE}
+plot(p4, col = "RED", lwd = 3, xlim = c(0,3))
+abline(h = 0, col = "BLUE") 
+abline(v = 1, col = "BLUE")
+abline(v = 2, col = "BLUE")
+abline(v = 3, col = "BLUE")
+```
+
+### Newton
+
+```{r newseq4, echo = FALSE}
+newtonRunner(y)
+```
+
+### ALS
+
+```{r alsseq4, echo = FALSE, cache = TRUE}
+alsRunner(y)
+```
+
+### newtonLS
+
+```{r nlsseq4, echo = FALSE}
+nlsRunner(y)
+```
+
+# Appendix: Code
+
+## lsFunc.R
+
+```{r file_auxilary3, code = readLines("lsFunc.R")}
+```
+
+## findRoots.R
+
+```{r file_auxilary4, code = readLines("findRoots.R")}
+```
+
+## newton.R
+
+```{r file_auxilary5, code = readLines("newton.R")}
+```
+
+## alsSolve.R
+
+```{r file_auxilary6, code = readLines("alsSolve.R")}
+```
+
+## newtonLS.R
+
+```{r file_auxilary7, code = readLines("newtonLS.R")}
+```
+
+# References
